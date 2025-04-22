@@ -182,37 +182,8 @@
           return alert("❌ Failed to check MFA status. Please try logging in again.");
         }
 
-        // If no TOTP factors exist, try to enroll
-        if (!mfa?.totp?.length) {
-          await tryEnrollMFA();
-        } else {
-          // If we have existing factors, go straight to welcome
-          toggleUI("welcome");
-        }
-      } catch (err) {
-        console.error('MFA handle error:', err);
-        toggleUI("auth");
-        return alert("❌ Failed to handle MFA. Please try logging in again.");
-      }
-    }
-
-    async function tryEnrollMFA(retry = false) {
-      try {
-        toggleUI("loading");
-        // First check if we're already enrolled
-        const { data: factors, error: listError } = await supabase.auth.mfa.listFactors();
-        
-        if (listError) {
-          console.error('MFA list factors error:', listError);
-          if (!retry) {
-            return tryEnrollMFA(true);
-          }
-          toggleUI("auth");
-          return alert("❌ Failed to check existing MFA factors. Please try logging in again.");
-        }
-
-        // Check for any existing factors, including unverified ones
-        const existingFactor = factors?.totp?.find(f => f.status === 'verified' || f.status === 'unverified');
+        // Check for any existing factors
+        const existingFactor = mfa?.totp?.find(f => f.status === 'verified' || f.status === 'unverified');
         
         if (existingFactor) {
           if (existingFactor.status === 'verified') {
@@ -232,9 +203,47 @@
               return;
             }
           }
+        } else {
+          // If no factors exist, try to enroll
+          await tryEnrollMFA();
+        }
+      } catch (err) {
+        console.error('MFA handle error:', err);
+        toggleUI("auth");
+        return alert("❌ Failed to handle MFA. Please try logging in again.");
+      }
+    }
+
+    async function tryEnrollMFA(retry = false) {
+      try {
+        toggleUI("loading");
+        
+        // Check if we already have an unverified factor
+        const { data: factors, error: listError } = await supabase.auth.mfa.listFactors();
+        
+        if (listError) {
+          console.error('MFA list factors error:', listError);
+          if (!retry) {
+            return tryEnrollMFA(true);
+          }
+          toggleUI("auth");
+          return alert("❌ Failed to check existing MFA factors. Please try logging in again.");
         }
 
-        // If no existing factor, create a new one
+        const existingFactor = factors?.totp?.find(f => f.status === 'unverified');
+        if (existingFactor) {
+          mfaFactorId = existingFactor.id;
+          const { data: challengeData } = await supabase.auth.mfa.challenge({
+            factorId: mfaFactorId
+          });
+          if (challengeData?.totp?.qr_code) {
+            document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
+            toggleUI("mfa-setup");
+            return;
+          }
+        }
+
+        // If no existing unverified factor, create a new one
         const { data: enrollData, error: enrollError } = await supabase.auth.mfa.enroll({
           factorType: 'totp',
           friendlyName: 'Authenticator App'
