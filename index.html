@@ -193,13 +193,26 @@
         } else if (unverifiedFactor) {
           // If we have an unverified factor, show the setup screen
           mfaFactorId = unverifiedFactor.id;
-          const { data: challengeData } = await supabase.auth.mfa.challenge({
-            factorId: mfaFactorId
-          });
-          if (challengeData?.totp?.qr_code) {
-            document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
-            toggleUI("mfa-setup");
-            return;
+          try {
+            const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+              factorId: mfaFactorId
+            });
+            
+            if (challengeError) {
+              console.error('MFA challenge error:', challengeError);
+              toggleUI("auth");
+              return alert("❌ Failed to start MFA setup. Please try logging in again.");
+            }
+            
+            if (challengeData?.totp?.qr_code) {
+              document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
+              toggleUI("mfa-setup");
+              return;
+            }
+          } catch (err) {
+            console.error('MFA challenge exception:', err);
+            toggleUI("auth");
+            return alert("❌ Failed to start MFA setup. Please try logging in again.");
           }
         } else {
           // Only try to enroll if we have no factors at all
@@ -230,6 +243,19 @@
 
         // If we have any factors at all, don't try to enroll
         if (factors?.totp?.length > 0) {
+          // Instead of showing an error, try to use the existing factor
+          const unverifiedFactor = factors.totp.find(f => f.status === 'unverified');
+          if (unverifiedFactor) {
+            mfaFactorId = unverifiedFactor.id;
+            const { data: challengeData } = await supabase.auth.mfa.challenge({
+              factorId: mfaFactorId
+            });
+            if (challengeData?.totp?.qr_code) {
+              document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
+              toggleUI("mfa-setup");
+              return;
+            }
+          }
           toggleUI("auth");
           return alert("❌ MFA is already set up for this account. Please log in again.");
         }
