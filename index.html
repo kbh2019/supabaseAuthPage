@@ -115,7 +115,6 @@
 
       try {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        console.log('Login response:', { data, error });
 
         if (error) {
           console.error('Login error:', error);
@@ -123,39 +122,69 @@
           return alert("❌ Login failed: " + error.message);
         }
 
+        // First just get them logged in
         const user = data.user;
-        console.log('Login successful, user:', user);
         document.getElementById("user-email").innerText = user.email;
+        
+        // Now check MFA status
+        const { data: factors } = await supabase.auth.mfa.listFactors();
+        
+        // If they have no factors, they need to set up MFA
+        if (!factors?.totp?.length) {
+          const { data: enrollData, error: enrollError } = await supabase.auth.mfa.enroll({
+            factorType: 'totp'
+          });
 
-        await handleMFA();
-      } catch (err) {
-        console.error('Login exception:', err);
+          if (enrollError) {
+            console.error('MFA enrollment error:', enrollError);
+            await supabase.auth.signOut();
+            toggleUI("auth");
+            return alert("❌ MFA setup required. Please try logging in again.");
+          }
+
+          mfaFactorId = enrollData.id;
+          document.getElementById("mfa-qr").src = enrollData.totp.qr_code;
+          toggleUI("mfa-setup");
+          return;
+        }
+
+        // If they have a verified factor, they need to verify
+        const verifiedFactor = factors.totp.find(f => f.status === 'verified');
+        if (verifiedFactor) {
+          mfaFactorId = verifiedFactor.id;
+          toggleUI("mfa-setup");
+          return;
+        }
+
+        // If we get here something is wrong
+        await supabase.auth.signOut();
         toggleUI("auth");
-        return alert("❌ Login failed. Please try again.");
+        alert("❌ MFA status unclear. Please try logging in again.");
+      } catch (err) {
+        console.error('Login process error:', err);
+        toggleUI("auth");
+        alert("❌ Login failed. Please try again.");
       }
     });
 
     document.getElementById("verify-mfa").addEventListener("click", async () => {
       if (!mfaFactorId) {
         toggleUI("auth");
-        return alert("❌ No MFA setup active. Please log in again.");
+        return alert("❌ MFA setup not started. Please log in again.");
       }
 
       const code = document.getElementById("mfa-code").value;
       
       try {
-        // First challenge the MFA
         const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
           factorId: mfaFactorId
         });
 
         if (challengeError) {
           console.error('MFA challenge error:', challengeError);
-          alert("❌ MFA challenge failed: " + challengeError.message);
-          return;
+          return alert("❌ MFA verification failed: " + challengeError.message);
         }
 
-        // Then verify the code with the challenge
         const { error: verifyError } = await supabase.auth.mfa.verify({
           factorId: mfaFactorId,
           challengeId: challengeData.id,
@@ -164,13 +193,12 @@
 
         if (verifyError) {
           console.error('MFA verification error:', verifyError);
-          alert("❌ Incorrect MFA code: " + verifyError.message);
-          return;
+          return alert("❌ Incorrect code. Please try again.");
         }
 
         toggleUI("welcome");
       } catch (err) {
-        console.error('MFA verification exception:', err);
+        console.error('MFA verification error:', err);
         alert("❌ MFA verification failed. Please try again.");
       }
     });
@@ -279,10 +307,7 @@
     // Listen for auth state changes
     supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('Auth state changed:', event, session);
-      if (event === 'SIGNED_IN') {
-        document.getElementById("user-email").innerText = session.user.email;
-        await handleMFA();
-      } else if (event === 'SIGNED_OUT') {
+      if (event === 'SIGNED_OUT') {
         toggleUI("auth");
       }
     });
