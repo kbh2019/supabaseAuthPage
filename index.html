@@ -193,13 +193,12 @@
         console.error('MFA handle error:', err);
         toggleUI("auth");
         return alert("❌ Failed to handle MFA. Please try logging in again.");
-      } finally {
-        toggleUI("welcome");
       }
     }
 
     async function tryEnrollMFA(retry = false) {
       try {
+        toggleUI("loading");
         // First check if we're already enrolled
         const { data: factors, error: listError } = await supabase.auth.mfa.listFactors();
         
@@ -211,8 +210,6 @@
           toggleUI("auth");
           return alert("❌ Failed to check existing MFA factors. Please try logging in again.");
         }
-
-        console.log('Current MFA factors:', factors); // Debug log
 
         // Check for any existing factors, including unverified ones
         const existingFactor = factors?.totp?.find(f => f.status === 'verified' || f.status === 'unverified');
