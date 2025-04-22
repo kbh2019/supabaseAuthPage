@@ -185,105 +185,74 @@
       try {
         console.log('Starting MFA check...');
         toggleUI("loading");
+
+        // First check if user has any MFA factors
+        const { data: factors, error } = await supabase.auth.mfa.listFactors();
         
-        // First check if MFA is required
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        
-        if (userError) {
-          console.error('Error getting user:', userError);
+        if (error) {
+          console.error('Error checking MFA factors:', error);
           toggleUI("auth");
-          return alert("❌ Failed to get user info. Please try logging in again.");
+          return alert("❌ Failed to check MFA status. Please try logging in again.");
         }
 
-        console.log('User info:', user);
+        console.log('Current MFA factors:', factors);
 
-        // If user has MFA enabled, proceed with MFA setup
-        if (user?.factors?.length > 0) {
-          console.log('User has MFA factors, proceeding with setup');
-          await tryEnrollMFA();
+        // If no factors exist, set up MFA
+        if (!factors?.totp?.length) {
+          console.log('No MFA factors found, setting up new MFA');
+          const { data: enrollData, error: enrollError } = await supabase.auth.mfa.enroll({
+            factorType: 'totp',
+            friendlyName: 'Authenticator App'
+          });
+
+          if (enrollError) {
+            console.error('MFA enrollment error:', enrollError);
+            toggleUI("auth");
+            return alert("❌ Failed to set up MFA: " + enrollError.message);
+          }
+
+          if (!enrollData?.totp?.qr_code) {
+            console.error('Missing QR code in enrollment data');
+            toggleUI("auth");
+            return alert("❌ Failed to generate MFA QR code. Please try again.");
+          }
+
+          mfaFactorId = enrollData.id;
+          document.getElementById("mfa-qr").src = enrollData.totp.qr_code;
+          toggleUI("mfa-setup");
           return;
         }
 
-        // If no MFA is set up, go straight to welcome
-        console.log('No MFA required, going to welcome screen');
-        toggleUI("welcome");
+        // If we have factors, verify MFA
+        const verifiedFactor = factors.totp.find(f => f.status === 'verified');
+        if (verifiedFactor) {
+          console.log('Found verified factor, starting verification');
+          mfaFactorId = verifiedFactor.id;
+          const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+            factorId: mfaFactorId
+          });
+
+          if (challengeError) {
+            console.error('MFA challenge error:', challengeError);
+            toggleUI("auth");
+            return alert("❌ Failed to start MFA verification: " + challengeError.message);
+          }
+
+          if (challengeData?.totp?.qr_code) {
+            document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
+            toggleUI("mfa-setup");
+            return;
+          }
+        }
+
+        // If we get here, something went wrong
+        console.error('Unexpected MFA state');
+        toggleUI("auth");
+        return alert("❌ Unexpected MFA state. Please try logging in again.");
       } catch (err) {
         console.error('MFA handle error:', err);
-        // If we can't determine MFA status, assume no MFA is needed
-        toggleUI("welcome");
-      }
-    }
-
-    async function tryEnrollMFA(retry = false) {
-      try {
-        console.log('Starting MFA enrollment...');
-        toggleUI("loading");
-        
-        // Try to get existing factors first
-        const { data: factors, error: listError } = await supabase.auth.mfa.listFactors();
-        
-        if (listError) {
-          console.error('MFA list factors error during enrollment:', listError);
-          if (!retry) {
-            return tryEnrollMFA(true);
-          }
-          toggleUI("welcome"); // If we can't list factors, assume MFA is not needed
-          return;
-        }
-
-        // If we have any factors at all, don't try to enroll
-        if (factors?.totp?.length > 0) {
-          console.log('Found existing factors, attempting to use them');
-          const unverifiedFactor = factors.totp.find(f => f.status === 'unverified');
-          if (unverifiedFactor) {
-            mfaFactorId = unverifiedFactor.id;
-            const { data: challengeData } = await supabase.auth.mfa.challenge({
-              factorId: mfaFactorId
-            });
-            if (challengeData?.totp?.qr_code) {
-              document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
-              toggleUI("mfa-setup");
-              return;
-            }
-          }
-          toggleUI("welcome"); // If we can't use existing factors, assume MFA is not needed
-          return;
-        }
-
-        // Only proceed with enrollment if we have no factors
-        console.log('No existing factors, creating new one');
-        const { data: enrollData, error: enrollError } = await supabase.auth.mfa.enroll({
-          factorType: 'totp',
-          friendlyName: 'Authenticator App'
-        });
-
-        if (enrollError) {
-          console.error('MFA enrollment error:', enrollError);
-          if (!retry) {
-            return tryEnrollMFA(true);
-          }
-          toggleUI("welcome"); // If enrollment fails, assume MFA is not needed
-          return;
-        }
-
-        if (!enrollData?.totp?.qr_code) {
-          console.error('Missing QR code in enrollment data:', enrollData);
-          if (!retry) {
-            return tryEnrollMFA(true);
-          }
-          toggleUI("welcome"); // If we can't get QR code, assume MFA is not needed
-          return;
-        }
-
-        mfaFactorId = enrollData.id;
-        document.getElementById("mfa-qr").src = enrollData.totp.qr_code;
-        toggleUI("mfa-setup");
-      } catch (err) {
-        console.error('MFA enrollment exception:', err);
-        if (!retry) {
-          return tryEnrollMFA(true);
-        }
-        toggleUI("welcome"); // If anything fails, assume MFA is not needed
+        toggleUI("auth");
+        return alert("❌ Failed to handle MFA. Please try logging in again.");
       }
     }
 
