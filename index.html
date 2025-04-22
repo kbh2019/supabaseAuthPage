@@ -183,28 +183,26 @@
         }
 
         // Check for any existing factors
-        const existingFactor = mfa?.totp?.find(f => f.status === 'verified' || f.status === 'unverified');
+        const verifiedFactor = mfa?.totp?.find(f => f.status === 'verified');
+        const unverifiedFactor = mfa?.totp?.find(f => f.status === 'unverified');
         
-        if (existingFactor) {
-          if (existingFactor.status === 'verified') {
-            // If factor is verified, go to welcome screen
-            toggleUI("welcome");
+        if (verifiedFactor) {
+          // If we have a verified factor, go straight to welcome
+          toggleUI("welcome");
+          return;
+        } else if (unverifiedFactor) {
+          // If we have an unverified factor, show the setup screen
+          mfaFactorId = unverifiedFactor.id;
+          const { data: challengeData } = await supabase.auth.mfa.challenge({
+            factorId: mfaFactorId
+          });
+          if (challengeData?.totp?.qr_code) {
+            document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
+            toggleUI("mfa-setup");
             return;
-          } else {
-            // If factor exists but is unverified, use it
-            mfaFactorId = existingFactor.id;
-            // Get a fresh QR code for the existing factor
-            const { data: challengeData } = await supabase.auth.mfa.challenge({
-              factorId: mfaFactorId
-            });
-            if (challengeData?.totp?.qr_code) {
-              document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
-              toggleUI("mfa-setup");
-              return;
-            }
           }
         } else {
-          // If no factors exist, try to enroll
+          // Only try to enroll if we have no factors at all
           await tryEnrollMFA();
         }
       } catch (err) {
@@ -218,7 +216,7 @@
       try {
         toggleUI("loading");
         
-        // Check if we already have an unverified factor
+        // Double check that we don't have any factors before enrolling
         const { data: factors, error: listError } = await supabase.auth.mfa.listFactors();
         
         if (listError) {
@@ -230,20 +228,13 @@
           return alert("❌ Failed to check existing MFA factors. Please try logging in again.");
         }
 
-        const existingFactor = factors?.totp?.find(f => f.status === 'unverified');
-        if (existingFactor) {
-          mfaFactorId = existingFactor.id;
-          const { data: challengeData } = await supabase.auth.mfa.challenge({
-            factorId: mfaFactorId
-          });
-          if (challengeData?.totp?.qr_code) {
-            document.getElementById("mfa-qr").src = challengeData.totp.qr_code;
-            toggleUI("mfa-setup");
-            return;
-          }
+        // If we have any factors at all, don't try to enroll
+        if (factors?.totp?.length > 0) {
+          toggleUI("auth");
+          return alert("❌ MFA is already set up for this account. Please log in again.");
         }
 
-        // If no existing unverified factor, create a new one
+        // Only proceed with enrollment if we have no factors
         const { data: enrollData, error: enrollError } = await supabase.auth.mfa.enroll({
           factorType: 'totp',
           friendlyName: 'Authenticator App'
