@@ -280,6 +280,15 @@
 
     // Initialize
     toggleUI("auth");
+    
+    // Check for force logout parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('logout') === 'true') {
+      supabase.auth.signOut();
+      // Remove the logout parameter from URL without refreshing
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    
     handleAuthRedirect();
 
     // Listen for auth state changes
