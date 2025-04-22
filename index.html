@@ -51,29 +51,21 @@
       const email = document.getElementById("email").value;
       const password = document.getElementById("password").value;
 
-      // First try to sign in with a dummy password
-      const { data: { user }, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password: 'dummy-password'
+      // Try signup directly - Supabase will handle duplicate emails
+      const { data, error } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+          emailRedirectTo: window.location.origin
+        }
       });
 
-      // If we get a user back, it means the email exists
-      if (user) {
-        alert("That email is already registered. Please log in instead.");
-        return;
-      }
-
-      // If we get a specific error about invalid credentials, it means the user exists
-      if (signInError && signInError.message.includes('Invalid login credentials')) {
-        alert("That email is already registered. Please log in instead.");
-        return;
-      }
-
-      // If we get any other error, proceed with signup
-      const { error } = await supabase.auth.signUp({ email, password });
-
       if (error) {
-        alert("❌ Sign up failed: " + error.message);
+        if (error.message.includes("already registered")) {
+          alert("This exact email is already registered. Please log in instead.");
+        } else {
+          alert("❌ Sign up failed: " + error.message);
+        }
       } else {
         alert("✅ Check your email to confirm your sign-up.");
       }
