@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Supabase Login with MFA</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    #mfa-setup, #welcome, #loading, #logout { display: none; }
+  </style>
+</head>
+<body>
+
+  <h2>Supabase Login / Signup</h2>
+
+  <div id="auth">
+    <input type="email" id="email" placeholder="Email" />
+    <br><br>
+    <input type="password" id="password" placeholder="Password" />
+    <br><br>
+    <button id="signup">Sign Up</button>
+    <button id="login">Login</button>
+  </div>
+
+  <div id="loading">🔐 Logging in...</div>
+
+  <div id="mfa-setup">
+    <h3>Set up 2FA (App Authenticator)</h3>
+    <p>Scan the QR code below with your authenticator app</p>
+    <img id="mfa-qr" src="" alt="QR Code" />
+    <br><br>
+    <input type="text" id="mfa-code" placeholder="Enter 6-digit code" />
+    <button id="verify-mfa">Verify MFA</button>
+  </div>
+
+  <div id="welcome">
+    <h3>🎉 You're logged in!</h3>
+    <p id="user-email"></p>
+  </div>
+
+  <button id="logout">Logout</button>
+
+  <script>
+    const SUPABASE_URL = 'https://ryeywgwkkkcvdhsaajmx.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ5ZXl3Z3dra2tjdmRoc2Fham14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDMxMDQ4MzUsImV4cCI6MjA1ODY4MDgzNX0.zhS8BebNMJ50RjIJ6K8Zw9ML0xoJadMgtTVpmVkrfGs';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let mfaFactorId = null;
+
+    document.getElementById("signup").addEventListener("click", async () => {
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+
+      // First try to sign in with a dummy password
+      const { data: { user }, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password: 'dummy-password'
+      });
+
+      // If we get a user back, it means the email exists
+      if (user) {
+        alert("That email is already registered. Please log in instead.");
+        return;
+      }
+
+      // If we get a specific error about invalid credentials, it means the user exists
+      if (signInError && signInError.message.includes('Invalid login credentials')) {
+        alert("That email is already registered. Please log in instead.");
+        return;
+      }
+
+      // If we get any other error, proceed with signup
+      const { error } = await supabase.auth.signUp({ email, password });
+
+      if (error) {
+        alert("❌ Sign up failed: " + error.message);
+      } else {
+        alert("✅ Check your email to confirm your sign-up.");
+      }
+    });
+
+    document.getElementById("login").addEventListener("click", async () => {
+      toggleUI("loading");
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        toggleUI("auth");
+        return alert("❌ Login failed: " + error.message);
+      }
+
+      const user = data.user;
+      document.getElementById("user-email").innerText = user.email;
+
+      await handleMFA();
+    });
+
+    document.getElementById("verify-mfa").addEventListener("click", async () => {
+      if (!mfaFactorId) {
+        toggleUI("auth");
+        return alert("❌ No MFA setup active. Please log in again.");
+      }
+
+      const code = document.getElementById("mfa-code").value;
+      
+      try {
+        // First challenge the MFA
+        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+          factorId: mfaFactorId
+        });
+
+        if (challengeError) {
+          console.error('MFA challenge error:', challengeError);
+          alert("❌ MFA challenge failed: " + challengeError.message);
+          return;
+        }
+
+        // Then verify the code with the challenge
+        const { error: verifyError } = await supabase.auth.mfa.verify({
+          factorId: mfaFactorId,
+          challengeId: challengeData.id,
+          code
+        });
+
+        if (verifyError) {
+          console.error('MFA verification error:', verifyError);
+          alert("❌ Incorrect MFA code: " + verifyError.message);
+          return;
+        }
+
+        toggleUI("welcome");
+      } catch (err) {
+        console.error('MFA verification exception:', err);
+        alert("❌ MFA verification failed. Please try again.");
+      }
+    });
+
+    document.getElementById("logout").addEventListener("click", async () => {
+      await supabase.auth.signOut();
+      alert("✅ Logged out.");
+      toggleUI("auth");
+    });
+
+    async function handleMFA() {
+      try {
+        const { data: mfa, error } = await supabase.auth.mfa.listFactors();
+        
+        if (error) {
+          console.error('MFA list factors error:', error);
+          toggleUI("auth");
+          return alert("❌ Failed to check MFA status. Please try logging in again.");
+        }
+
+        // If no TOTP factors exist, try to enroll
+        if (!mfa?.totp?.length) {
+          await tryEnrollMFA();
+        } else {
+          // If we have existing factors, go straight to welcome
+          toggleUI("welcome");
+        }
+      } catch (err) {
+        console.error('MFA handle error:', err);
+        toggleUI("auth");
+        return alert("❌ Failed to handle MFA. Please try logging in again.");
+      }
+    }
+
+    async function tryEnrollMFA(retry = false) {
+      try {
+        // First check if we're already enrolled
+        const { data: existingFactors, error: listError } = await supabase.auth.mfa.listFactors();
+        
+        if (listError) {
+          console.error('MFA list factors error:', listError);
+          if (!retry) {
+            return tryEnrollMFA(true);
+          }
+          toggleUI("auth");
+          return alert("❌ Failed to check existing MFA factors. Please try logging in again.");
+        }
+
+        // If we already have a TOTP factor, no need to enroll
+        if (existingFactors?.totp?.length > 0) {
+          toggleUI("welcome");
+          return;
+        }
+
+        // Proceed with enrollment
+        const { data: enrollData, error: enrollError } = await supabase.auth.mfa.enroll({
+          factorType: 'totp',
+          friendlyName: 'Authenticator App'
+        });
+
+        if (enrollError) {
+          console.error('MFA enrollment error:', enrollError);
+          if (!retry) {
+            return tryEnrollMFA(true);
+          }
+          toggleUI("auth");
+          return alert("❌ MFA enrollment failed: " + enrollError.message);
+        }
+
+        if (!enrollData?.totp?.qr_code) {
+          console.error('Missing QR code in enrollment data:', enrollData);
+          if (!retry) {
+            return tryEnrollMFA(true);
+          }
+          toggleUI("auth");
+          return alert("❌ MFA QR code generation failed. Please try logging in again.");
+        }
+
+        mfaFactorId = enrollData.id;
+        document.getElementById("mfa-qr").src = enrollData.totp.qr_code;
+        toggleUI("mfa-setup");
+      } catch (err) {
+        console.error('MFA enrollment exception:', err);
+        if (!retry) {
+          return tryEnrollMFA(true);
+        }
+        toggleUI("auth");
+        return alert("❌ MFA enrollment failed. Please try logging in again.");
+      }
+    }
+
+    function toggleUI(section) {
+      const all = ["auth", "mfa-setup", "loading", "welcome", "logout"];
+      all.forEach(id => {
+        document.getElementById(id).style.display = (id === section || (section === "welcome" && id === "logout")) ? "block" : "none";
+      });
+    }
+
+    toggleUI("auth");
+  </script>
+</body>
+</html>
