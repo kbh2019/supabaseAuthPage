@@ -49,16 +49,21 @@
 
     // Check for redirect after email confirmation
     async function handleAuthRedirect() {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('Error checking auth state:', error);
-        return;
-      }
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('Error checking auth state:', error);
+          return;
+        }
 
-      if (session) {
-        document.getElementById("user-email").innerText = session.user.email;
-        await handleMFA();
+        if (session) {
+          document.getElementById("user-email").innerText = session.user.email;
+          toggleUI("loading");
+          await handleMFA();
+        }
+      } catch (err) {
+        console.error('Auth redirect error:', err);
       }
     }
 
@@ -168,6 +173,7 @@
 
     async function handleMFA() {
       try {
+        toggleUI("loading");
         const { data: mfa, error } = await supabase.auth.mfa.listFactors();
         
         if (error) {
@@ -187,6 +193,8 @@
         console.error('MFA handle error:', err);
         toggleUI("auth");
         return alert("❌ Failed to handle MFA. Please try logging in again.");
+      } finally {
+        toggleUI("welcome");
       }
     }
 
