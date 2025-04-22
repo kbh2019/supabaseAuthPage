@@ -48,8 +48,19 @@
     let mfaFactorId = null;
 
     document.getElementById("signup").addEventListener("click", async () => {
-      const email = document.getElementById("email").value;
+      const email = document.getElementById("email").value.trim();
       const password = document.getElementById("password").value;
+
+      // Basic validation
+      if (!email || !email.includes('@')) {
+        alert("Please enter a valid email address");
+        return;
+      }
+
+      if (!password || password.length < 6) {
+        alert("Password must be at least 6 characters long");
+        return;
+      }
 
       // Try signup directly - Supabase will handle duplicate emails
       const { data, error } = await supabase.auth.signUp({ 
@@ -60,15 +71,20 @@
         }
       });
 
+      console.log('Signup response:', { data, error }); // Debug log
+
       if (error) {
-        if (error.message.includes("already registered")) {
-          alert("This exact email is already registered. Please log in instead.");
-        } else {
-          alert("❌ Sign up failed: " + error.message);
-        }
-      } else {
-        alert("✅ Check your email to confirm your sign-up.");
+        console.error('Signup error:', error); // Debug log
+        alert("❌ Sign up failed: " + error.message);
+        return;
       }
+
+      if (data?.user?.identities?.length === 0) {
+        alert("This email is already registered. Please log in instead.");
+        return;
+      }
+
+      alert("✅ Check your email to confirm your sign-up.");
     });
 
     document.getElementById("login").addEventListener("click", async () => {
