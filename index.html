@@ -47,6 +47,21 @@
 
     let mfaFactorId = null;
 
+    // Check for redirect after email confirmation
+    async function handleAuthRedirect() {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error('Error checking auth state:', error);
+        return;
+      }
+
+      if (session) {
+        document.getElementById("user-email").innerText = session.user.email;
+        await handleMFA();
+      }
+    }
+
     document.getElementById("signup").addEventListener("click", async () => {
       const email = document.getElementById("email").value.trim();
       const password = document.getElementById("password").value;
@@ -67,7 +82,7 @@
         email, 
         password,
         options: {
-          emailRedirectTo: window.location.origin
+          emailRedirectTo: 'https://kbh2019.github.io/supabaseAuthPage'
         }
       });
 
@@ -239,7 +254,20 @@
       });
     }
 
+    // Initialize
     toggleUI("auth");
+    handleAuthRedirect();
+
+    // Listen for auth state changes
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Auth state changed:', event, session);
+      if (event === 'SIGNED_IN') {
+        document.getElementById("user-email").innerText = session.user.email;
+        await handleMFA();
+      } else if (event === 'SIGNED_OUT') {
+        toggleUI("auth");
+      }
+    });
   </script>
 </body>
 </html>
